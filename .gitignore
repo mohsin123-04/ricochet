@@ -1,0 +1,12 @@
+# Odin / build artifacts
+*.exe
+*.pdb
+*.lib
+*.obj
+*.ilk
+ricochet
+ricochet.bin
+
+# OS / editor
+.DS_Store
+Thumbs.db
