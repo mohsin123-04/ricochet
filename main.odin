@@ -38,6 +38,25 @@ GRUNT_RADIUS :: 12.0
 GRUNT_SPEED  :: 140.0
 GRUNT_HP     :: 1
 
+// purple brute: slow and tanky, arrives ~20s. Needs a power-3 (twice-bounced) hit to one-shot.
+BRUTE_RADIUS :: 18.0
+BRUTE_SPEED  :: 70.0
+BRUTE_HP     :: 3
+BRUTE_AFTER  :: 20.0
+
+// orange charger: arrives ~40s. Winds up, flashes a red line, then dashes along it.
+CHARGER_RADIUS :: 14.0
+CHARGER_SPEED  :: 120.0 // normal chase
+CHARGER_HP     :: 2
+CHARGER_AFTER  :: 40.0
+DASH_SPEED     :: 760.0
+TELEGRAPH_TIME :: 0.9
+DASH_TIME      :: 0.35
+DAZED_TIME     :: 1.2
+CHASE_TIME     :: 1.6 // max chase before it commits to a dash
+
+HIT_CD :: 0.18 // per-enemy debounce so one bullet pass = one hit of `power`
+
 // arena bounds for the bullet CENTRE (walls inset, minus the bullet radius)
 AX0 :: WALL + BULLET_RADIUS
 AY0 :: WALL + BULLET_RADIUS
@@ -56,10 +75,21 @@ Bullet :: struct {
 	kills:   int, // kills in the current throw -> rising combo value
 }
 
+EnemyKind    :: enum { Grunt, Brute, Charger }
+ChargerState :: enum { Chase, Telegraph, Dash, Dazed }
+
 Enemy :: struct {
-	pos:   rl.Vector2,
-	hp:    int,
-	alive: bool,
+	kind:   EnemyKind,
+	pos:    rl.Vector2,
+	hp:     int,
+	radius: f32,
+	speed:  f32,
+	alive:  bool,
+	hit_cd: f32, // debounce for bullet damage
+	// charger only
+	cstate:   ChargerState,
+	timer:    f32,
+	dash_dir: rl.Vector2,
 }
 
 Mode :: enum { Title, Playing, GameOver }
@@ -98,15 +128,90 @@ reset :: proc(g: ^Game) {
 	}
 }
 
-spawn_grunt :: proc(g: ^Game) {
-	pos: rl.Vector2
+edge_spawn_pos :: proc() -> rl.Vector2 {
 	switch int(rand.float32() * 4) {
-	case 0: pos = {AX0, rand.float32() * (AY1 - AY0) + AY0} // left
-	case 1: pos = {AX1, rand.float32() * (AY1 - AY0) + AY0} // right
-	case 2: pos = {rand.float32() * (AX1 - AX0) + AX0, AY0} // top
-	case:   pos = {rand.float32() * (AX1 - AX0) + AX0, AY1} // bottom
+	case 0: return {AX0, rand.float32() * (AY1 - AY0) + AY0} // left
+	case 1: return {AX1, rand.float32() * (AY1 - AY0) + AY0} // right
+	case 2: return {rand.float32() * (AX1 - AX0) + AX0, AY0} // top
+	case:   return {rand.float32() * (AX1 - AX0) + AX0, AY1} // bottom
 	}
-	append(&g.enemies, Enemy{pos = pos, hp = GRUNT_HP, alive = true})
+}
+
+spawn_enemy :: proc(g: ^Game) {
+	// pick a kind based on how long the run has lasted
+	kind := EnemyKind.Grunt
+	r := rand.float32()
+	if g.time >= CHARGER_AFTER && r < 0.22 {
+		kind = .Charger
+	} else if g.time >= BRUTE_AFTER && r < 0.5 {
+		kind = .Brute
+	}
+
+	e := Enemy{kind = kind, pos = edge_spawn_pos(), alive = true}
+	switch kind {
+	case .Grunt:
+		e.hp = GRUNT_HP;   e.radius = GRUNT_RADIUS;   e.speed = GRUNT_SPEED
+	case .Brute:
+		e.hp = BRUTE_HP;   e.radius = BRUTE_RADIUS;   e.speed = BRUTE_SPEED
+	case .Charger:
+		e.hp = CHARGER_HP; e.radius = CHARGER_RADIUS; e.speed = CHARGER_SPEED
+		e.cstate = .Chase; e.timer = CHASE_TIME
+	}
+	append(&g.enemies, e)
+}
+
+touch_damage :: proc(e: Enemy) -> int {
+	switch e.kind {
+	case .Grunt:   return 10
+	case .Brute:   return 14
+	case .Charger: return e.cstate == .Dash ? 20 : 10
+	}
+	return 10
+}
+
+// per-kind movement / AI for one enemy
+update_enemy_move :: proc(g: ^Game, e: ^Enemy, dt: f32) {
+	switch e.kind {
+	case .Grunt, .Brute:
+		e.pos += safe_normalize(g.player - e.pos) * e.speed * dt
+
+	case .Charger:
+		switch e.cstate {
+		case .Chase:
+			e.pos += safe_normalize(g.player - e.pos) * e.speed * dt
+			e.timer -= dt
+			// commit to a dash once close enough or after chasing a while
+			if linalg.distance(e.pos, g.player) < 300 || e.timer <= 0 {
+				e.cstate = .Telegraph
+				e.timer = TELEGRAPH_TIME
+				e.dash_dir = safe_normalize(g.player - e.pos) // lock the aim now
+			}
+		case .Telegraph:
+			// stands still, winding up; the red line is drawn in draw()
+			e.timer -= dt
+			if e.timer <= 0 {
+				e.cstate = .Dash
+				e.timer = DASH_TIME
+			}
+		case .Dash:
+			e.pos += e.dash_dir * DASH_SPEED * dt
+			// keep it inside the arena
+			e.pos.x = clamp(e.pos.x, WALL + e.radius, WINDOW_W - WALL - e.radius)
+			e.pos.y = clamp(e.pos.y, WALL + e.radius, WINDOW_H - WALL - e.radius)
+			e.timer -= dt
+			if e.timer <= 0 {
+				e.cstate = .Dazed
+				e.timer = DAZED_TIME
+			}
+		case .Dazed:
+			// stands still, wide open to a hit
+			e.timer -= dt
+			if e.timer <= 0 {
+				e.cstate = .Chase
+				e.timer = CHASE_TIME
+			}
+		}
+	}
 }
 
 update :: proc(g: ^Game, dt: f32) {
@@ -223,13 +328,17 @@ update :: proc(g: ^Game, dt: f32) {
 	// --- enemies ---
 	for &e in g.enemies {
 		if !e.alive do continue
-		e.pos += safe_normalize(g.player - e.pos) * GRUNT_SPEED * dt
+		if e.hit_cd > 0 do e.hit_cd -= dt
 
-		// bullet (flying) hits grunts and pierces through; each kill in the same
-		// throw is worth progressively more (combo)
-		if b.state == .Flying &&
-		   linalg.distance(b.pos, e.pos) < BULLET_RADIUS + GRUNT_RADIUS {
+		update_enemy_move(g, &e, dt)
+
+		// bullet (flying) hits enemies and pierces through. The per-enemy debounce
+		// means one pass applies `power` once, so a brute (3 HP) needs a power-3
+		// (twice-bounced) hit to die in a single pass. Each kill in the throw scores more.
+		if b.state == .Flying && e.hit_cd <= 0 &&
+		   linalg.distance(b.pos, e.pos) < BULLET_RADIUS + e.radius {
 			e.hp -= b.power
+			e.hit_cd = HIT_CD
 			if e.hp <= 0 {
 				e.alive = false
 				b.kills += 1
@@ -237,10 +346,10 @@ update :: proc(g: ^Game, dt: f32) {
 			}
 		}
 
-		// enemy touch hurts the player
+		// enemy touch hurts the player (a charger's dash hits harder)
 		if e.alive && g.touch_cd <= 0 &&
-		   linalg.distance(e.pos, g.player) < PLAYER_RADIUS + GRUNT_RADIUS {
-			g.hp -= TOUCH_DAMAGE
+		   linalg.distance(e.pos, g.player) < PLAYER_RADIUS + e.radius {
+			g.hp -= touch_damage(e)
 			g.touch_cd = TOUCH_CD
 		}
 	}
@@ -253,7 +362,7 @@ update :: proc(g: ^Game, dt: f32) {
 	// spawn grunts, a little faster over time
 	g.spawn_timer -= dt
 	if g.spawn_timer <= 0 {
-		spawn_grunt(g)
+		spawn_enemy(g)
 		g.spawn_timer = max(0.35, 1.5 - g.time * 0.01)
 	}
 
@@ -284,9 +393,10 @@ draw :: proc(g: ^Game) {
 		return
 	}
 
-	// enemies (green grunts)
+	// enemies
 	for e in g.enemies {
-		if e.alive do rl.DrawCircleV(e.pos, GRUNT_RADIUS, rl.Color{70, 200, 90, 255})
+		if !e.alive do continue
+		draw_enemy(g, e)
 	}
 
 	// player (flashes while burned)
@@ -321,6 +431,39 @@ draw :: proc(g: ^Game) {
 		center_text("YOU DIED", 64, WINDOW_H / 2 - 90, rl.Color{255, 90, 90, 255})
 		center_text(fmt.ctprintf("Score: %d    Survived: %.0fs", g.score, g.time), 28, WINDOW_H / 2, rl.RAYWHITE)
 		center_text("Press R to play again   -   ENTER for title", 22, WINDOW_H / 2 + 60, rl.YELLOW)
+	}
+}
+
+draw_enemy :: proc(g: ^Game, e: Enemy) {
+	switch e.kind {
+	case .Grunt:
+		rl.DrawCircleV(e.pos, e.radius, rl.Color{70, 200, 90, 255})
+
+	case .Brute:
+		rl.DrawCircleV(e.pos, e.radius, rl.Color{170, 90, 220, 255})
+		// hp pips so the player can read how many hits are left
+		for i in 0 ..< e.hp {
+			rl.DrawCircleV({e.pos.x - 10 + f32(i) * 10, e.pos.y - e.radius - 8}, 3, rl.RAYWHITE)
+		}
+
+	case .Charger:
+		col := rl.Color{240, 150, 40, 255}
+		switch e.cstate {
+		case .Telegraph:
+			// flash + a red aim line showing where it will dash
+			if int(g.time * 16) % 2 == 0 do col = rl.RAYWHITE
+			end := e.pos + e.dash_dir * 900
+			rl.DrawLineEx(e.pos, end, 3, rl.Color{255, 60, 60, 200})
+		case .Dash:
+			col = rl.Color{255, 200, 90, 255}
+		case .Dazed:
+			col = rl.Color{150, 110, 70, 255} // dimmed: wide open
+		case .Chase:
+		}
+		rl.DrawCircleV(e.pos, e.radius, col)
+		if e.cstate == .Dazed {
+			rl.DrawCircleLinesV(e.pos, e.radius + 4, rl.Color{255, 255, 255, 120})
+		}
 	}
 }
 

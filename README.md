@@ -34,12 +34,19 @@ While the bullet is out of your hand you're unarmed — you can only run. When i
 - **Once bounced, it's hot.** If it touches *you*, you take damage.
 - **Friction.** It slows over time, then drops cold for you to retrieve.
 
+## Enemies
+
+- **Green grunt** — 1 HP, fast. The classic ARENA chaser.
+- **Purple brute** — 3 HP, slow, from ~20s. Needs a power-3 (twice-bounced) hit to one-shot. HP pips show how many hits are left.
+- **Orange charger** — 2 HP, from ~40s. Winds up, flashes a red aim line, then dashes along it. Step aside, then punish it while it's dazed.
+
 ## Status
 
 - **Pass 1** — movement, the one-bullet throw/ricochet/bounce-power/hot/pick-up loop, green grunts, health, score, game over + replay.
 - **Pass 2** — **recall** (right click) and **pierce combos** (rising score per kill in one throw).
+- **Pass 3** — **purple brutes** and **orange chargers**, plus a per-enemy hit debounce so one bullet pass deals `power` once (makes brute HP meaningful).
 
-Planned next: **purple brutes** (3 HP, slow — need a twice-bounced bullet to one-shot), **orange chargers** (telegraph + dash), then a win condition and juice.
+Planned next: a **win** condition, then juice (screen shake, hit flashes, sound).
 
 ## Credits
 
