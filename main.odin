@@ -26,6 +26,8 @@ BOUNCE_SPEEDUP :: 1.08
 FRICTION       :: 150.0 // px/s^2 the bullet sheds while flying
 MIN_SPEED      :: 90.0  // below this it drops cold to the floor
 MAX_POWER      :: 6
+RECALL_SPEED   :: 720.0 // right-click: straight back to the hand
+COMBO_BASE     :: 100   // first kill in a throw; each further kill is worth more
 
 HOT_DAMAGE   :: 15 // your own bullet burns you
 TOUCH_DAMAGE :: 10 // an enemy touches you
@@ -42,7 +44,7 @@ AY0 :: WALL + BULLET_RADIUS
 AX1 :: WINDOW_W - WALL - BULLET_RADIUS
 AY1 :: WINDOW_H - WALL - BULLET_RADIUS
 
-BulletState :: enum { Held, Flying, Resting }
+BulletState :: enum { Held, Flying, Resting, Returning }
 
 Bullet :: struct {
 	state:   BulletState,
@@ -51,6 +53,7 @@ Bullet :: struct {
 	bounces: int,
 	power:   int,
 	hot:     bool,
+	kills:   int, // kills in the current throw -> rising combo value
 }
 
 Enemy :: struct {
@@ -137,8 +140,15 @@ update :: proc(g: ^Game, dt: f32) {
 	g.player.x = clamp(g.player.x, WALL + PLAYER_RADIUS, WINDOW_W - WALL - PLAYER_RADIUS)
 	g.player.y = clamp(g.player.y, WALL + PLAYER_RADIUS, WINDOW_H - WALL - PLAYER_RADIUS)
 
-	// --- the bullet ---
+	// right click recalls the bullet straight back to your hand (safe, but you
+	// throw away whatever power it had built up)
 	b := &g.bullet
+	if rl.IsMouseButtonPressed(.RIGHT) && (b.state == .Flying || b.state == .Resting) {
+		b.state = .Returning
+		b.hot = false
+	}
+
+	// --- the bullet ---
 	switch b.state {
 	case .Held:
 		b.pos = g.player
@@ -150,8 +160,20 @@ update :: proc(g: ^Game, dt: f32) {
 				b.bounces = 0
 				b.power = 1
 				b.hot = false
+				b.kills = 0
 				b.pos = g.player + dir * (PLAYER_RADIUS + BULLET_RADIUS + 2)
 			}
+		}
+
+	case .Returning:
+		// flies straight home, cold and harmless to everyone
+		dir := safe_normalize(g.player - b.pos)
+		b.pos += dir * RECALL_SPEED * dt
+		if linalg.distance(b.pos, g.player) < PLAYER_RADIUS + BULLET_RADIUS {
+			b.state = .Held
+			b.power = 1
+			b.hot = false
+			b.kills = 0
 		}
 
 	case .Flying:
@@ -194,6 +216,7 @@ update :: proc(g: ^Game, dt: f32) {
 			b.state = .Held
 			b.power = 1
 			b.hot = false
+			b.kills = 0
 		}
 	}
 
@@ -202,13 +225,15 @@ update :: proc(g: ^Game, dt: f32) {
 		if !e.alive do continue
 		e.pos += safe_normalize(g.player - e.pos) * GRUNT_SPEED * dt
 
-		// bullet (flying) kills grunts and pierces through
+		// bullet (flying) hits grunts and pierces through; each kill in the same
+		// throw is worth progressively more (combo)
 		if b.state == .Flying &&
 		   linalg.distance(b.pos, e.pos) < BULLET_RADIUS + GRUNT_RADIUS {
 			e.hp -= b.power
 			if e.hp <= 0 {
 				e.alive = false
-				g.score += 100
+				b.kills += 1
+				g.score += COMBO_BASE * b.kills
 			}
 		}
 
@@ -251,9 +276,10 @@ draw :: proc(g: ^Game) {
 	if g.mode == .Title {
 		center_text("RICOCHET", 72, WINDOW_H / 2 - 120, rl.RAYWHITE)
 		center_text("ARENA, but you only have one bullet.", 22, WINDOW_H / 2 - 30, rl.LIGHTGRAY)
-		center_text("WASD move   -   Left click throw toward the mouse", 20, WINDOW_H / 2 + 10, rl.GRAY)
+		center_text("WASD move   -   Left click throw   -   Right click recall", 20, WINDOW_H / 2 + 10, rl.GRAY)
 		center_text("It bounces off walls: +1 power each bounce. Once bounced, it burns YOU.", 20, WINDOW_H / 2 + 40, rl.GRAY)
-		center_text("When it stops, walk over it to pick it up.", 20, WINDOW_H / 2 + 70, rl.GRAY)
+		center_text("Each kill in one throw scores more. Recall is safe but resets power.", 20, WINDOW_H / 2 + 70, rl.GRAY)
+		center_text("When it stops, walk over it to pick it up.", 20, WINDOW_H / 2 + 100, rl.GRAY)
 		center_text("Press ENTER or click to start", 24, WINDOW_H / 2 + 130, rl.YELLOW)
 		return
 	}
@@ -276,6 +302,13 @@ draw :: proc(g: ^Game) {
 	case .Flying:
 		col := b.hot ? hot_color(b.power) : rl.Color{240, 230, 120, 255}
 		rl.DrawCircleV(b.pos, BULLET_RADIUS, col)
+		if b.kills > 0 {
+			center_text_at(fmt.ctprintf("x%d", b.kills), 22, i32(b.pos.x), i32(b.pos.y) - 30, rl.YELLOW)
+		}
+	case .Returning:
+		// a tether back to the hand so the recall reads clearly
+		rl.DrawLineEx(b.pos, g.player, 2, rl.Color{90, 200, 230, 120})
+		rl.DrawCircleV(b.pos, BULLET_RADIUS, rl.Color{90, 210, 240, 255})
 	case .Resting:
 		rl.DrawCircleV(b.pos, BULLET_RADIUS, rl.Color{120, 120, 130, 255})
 		rl.DrawCircleLinesV(b.pos, BULLET_RADIUS + 3, rl.Color{90, 90, 100, 255})
@@ -306,9 +339,10 @@ draw_hud :: proc(g: ^Game) {
 	label: cstring
 	col: rl.Color
 	switch b.state {
-	case .Held:    label = "BULLET: in hand";   col = rl.Color{200, 200, 210, 255}
-	case .Flying:  label = b.hot ? fmt.ctprintf("BULLET: HOT  power %d", b.power) : "BULLET: flying (cold)"; col = b.hot ? rl.Color{255, 140, 60, 255} : rl.Color{240, 230, 120, 255}
-	case .Resting: label = "BULLET: on the floor (walk over it)"; col = rl.Color{150, 150, 160, 255}
+	case .Held:      label = "BULLET: in hand";   col = rl.Color{200, 200, 210, 255}
+	case .Flying:    label = b.hot ? fmt.ctprintf("BULLET: HOT  power %d", b.power) : "BULLET: flying (cold)"; col = b.hot ? rl.Color{255, 140, 60, 255} : rl.Color{240, 230, 120, 255}
+	case .Returning: label = "BULLET: returning"; col = rl.Color{90, 210, 240, 255}
+	case .Resting:   label = "BULLET: on the floor (walk over it)"; col = rl.Color{150, 150, 160, 255}
 	}
 	rl.DrawText(label, WALL + 8, WINDOW_H - WALL - 26, 20, col)
 }
@@ -322,6 +356,11 @@ hot_color :: proc(power: int) -> rl.Color {
 center_text :: proc(text: cstring, size, y: i32, col: rl.Color) {
 	w := rl.MeasureText(text, size)
 	rl.DrawText(text, WINDOW_W / 2 - w / 2, y, size, col)
+}
+
+center_text_at :: proc(text: cstring, size, cx, y: i32, col: rl.Color) {
+	w := rl.MeasureText(text, size)
+	rl.DrawText(text, cx - w / 2, y, size, col)
 }
 
 main :: proc() {
