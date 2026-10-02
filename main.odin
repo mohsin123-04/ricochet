@@ -3,11 +3,12 @@ package ricochet
 // RICOCHET -- "ARENA, but you only have one bullet: it ricochets, gets stronger
 // with every bounce, and once it has bounced it burns you."
 //
-// Vertical slice (pass 1): player movement, the one bullet (throw / ricochet /
-// bounce-power / hot / pick-up), green grunts, health, score, game over + replay.
-// Later passes add: recall, pierce combos, purple brutes, orange chargers.
+// Full game: the one-bullet throw/ricochet/bounce-power/hot/recall/pick-up loop,
+// rising pierce combos, three enemy kinds (grunt / brute / charger), a 2-minute
+// survival win, lose + replay, and juice (screen shake, hit flash, procedural sound).
 
 import "core:fmt"
+import "core:math"
 import "core:math/linalg"
 import "core:math/rand"
 import rl "vendor:raylib"
@@ -29,10 +30,8 @@ MAX_POWER      :: 6
 RECALL_SPEED   :: 720.0 // right-click: straight back to the hand
 COMBO_BASE     :: 100   // first kill in a throw; each further kill is worth more
 
-HOT_DAMAGE   :: 15 // your own bullet burns you
-TOUCH_DAMAGE :: 10 // an enemy touches you
-IFRAMES      :: 0.8
-TOUCH_CD     :: 0.6
+HOT_DAMAGE :: 15  // your own bullet burns you
+IFRAMES    :: 0.8 // invulnerability window after any hit (see touch_damage for per-enemy touch damage)
 
 GRUNT_RADIUS :: 12.0
 GRUNT_SPEED  :: 140.0
@@ -56,6 +55,11 @@ DAZED_TIME     :: 1.2
 CHASE_TIME     :: 1.6 // max chase before it commits to a dash
 
 HIT_CD :: 0.18 // per-enemy debounce so one bullet pass = one hit of `power`
+
+WIN_TIME    :: 120.0 // survive two minutes to win
+SHAKE_DECAY :: 42.0  // px/s the screen shake bleeds off
+SHAKE_MAX   :: 14.0
+FLASH_TIME  :: 0.45  // red hurt-flash fade
 
 // arena bounds for the bullet CENTRE (walls inset, minus the bullet radius)
 AX0 :: WALL + BULLET_RADIUS
@@ -92,14 +96,20 @@ Enemy :: struct {
 	dash_dir: rl.Vector2,
 }
 
-Mode :: enum { Title, Playing, GameOver }
+Mode :: enum { Title, Playing, GameOver, Win }
+
+Sounds :: struct {
+	throw, bounce, kill, hurt, pickup, win, lose: rl.Sound,
+}
 
 Game :: struct {
 	mode:        Mode,
 	player:      rl.Vector2,
 	hp:          int,
-	iframes:     f32, // after a hot-bullet burn
-	touch_cd:    f32, // after an enemy touch
+	iframes:     f32, // invulnerability window after any hit
+	shake:       f32, // current screen-shake intensity (px)
+	flash:       f32, // red hurt-flash timer
+	snd:         Sounds,
 	bullet:      Bullet,
 	enemies:     [dynamic]Enemy,
 	score:       int,
@@ -112,12 +122,56 @@ safe_normalize :: proc(v: rl.Vector2) -> rl.Vector2 {
 	return linalg.normalize(v)
 }
 
+// build a short sound from scratch (no external assets): a decaying sine or
+// square tone. raylib copies the samples, so the temp buffer is freed after.
+make_sound :: proc(freq, dur, vol: f32, square: bool) -> rl.Sound {
+	SR :: 22050
+	n := int(f32(SR) * dur)
+	samples := make([]i16, n)
+	defer delete(samples)
+	for i in 0 ..< n {
+		t := f32(i) / f32(SR)
+		env := 1.0 - t / dur // linear fade to silence
+		phase := freq * t
+		s: f32
+		if square {
+			s = math.mod(phase, 1.0) < 0.5 ? 1.0 : -1.0
+		} else {
+			s = math.sin(phase * 2 * math.PI)
+		}
+		samples[i] = i16(s * env * vol * 32767)
+	}
+	w := rl.Wave {
+		frameCount = u32(n),
+		sampleRate = SR,
+		sampleSize = 16,
+		channels   = 1,
+		data       = rawptr(raw_data(samples)),
+	}
+	return rl.LoadSoundFromWave(w)
+}
+
+add_shake :: proc(g: ^Game, amount: f32) {
+	g.shake = min(SHAKE_MAX, g.shake + amount)
+}
+
+// one place for "the player got hit": damage + i-frames + flash + shake + sound
+hurt_player :: proc(g: ^Game, dmg: int) {
+	if g.iframes > 0 do return
+	g.hp -= dmg
+	g.iframes = IFRAMES
+	g.flash = FLASH_TIME
+	add_shake(g, 9)
+	rl.PlaySound(g.snd.hurt)
+}
+
 reset :: proc(g: ^Game) {
 	clear(&g.enemies)
 	g.player = {WINDOW_W / 2, WINDOW_H / 2}
 	g.hp = PLAYER_MAX_HP
 	g.iframes = 0
-	g.touch_cd = 0
+	g.shake = 0
+	g.flash = 0
 	g.score = 0
 	g.time = 0
 	g.spawn_timer = 1.0
@@ -222,7 +276,7 @@ update :: proc(g: ^Game, dt: f32) {
 			g.mode = .Playing
 		}
 		return
-	case .GameOver:
+	case .GameOver, .Win:
 		if rl.IsKeyPressed(.R) {
 			reset(g)
 			g.mode = .Playing
@@ -233,7 +287,15 @@ update :: proc(g: ^Game, dt: f32) {
 
 	g.time += dt
 	if g.iframes > 0 do g.iframes -= dt
-	if g.touch_cd > 0 do g.touch_cd -= dt
+	if g.flash > 0 do g.flash -= dt
+	if g.shake > 0 do g.shake = max(0, g.shake - SHAKE_DECAY * dt)
+
+	// survive the clock to win
+	if g.time >= WIN_TIME {
+		g.mode = .Win
+		rl.PlaySound(g.snd.win)
+		return
+	}
 
 	// --- player movement ---
 	move: rl.Vector2
@@ -267,6 +329,7 @@ update :: proc(g: ^Game, dt: f32) {
 				b.hot = false
 				b.kills = 0
 				b.pos = g.player + dir * (PLAYER_RADIUS + BULLET_RADIUS + 2)
+				rl.PlaySound(g.snd.throw)
 			}
 		}
 
@@ -279,6 +342,7 @@ update :: proc(g: ^Game, dt: f32) {
 			b.power = 1
 			b.hot = false
 			b.kills = 0
+			rl.PlaySound(g.snd.pickup)
 		}
 
 	case .Flying:
@@ -295,6 +359,9 @@ update :: proc(g: ^Game, dt: f32) {
 			b.power = min(1 + b.bounces, MAX_POWER)
 			b.vel *= BOUNCE_SPEEDUP
 			b.hot = true
+			rl.SetSoundPitch(g.snd.bounce, 1.0 + f32(b.bounces) * 0.12)
+			rl.PlaySound(g.snd.bounce)
+			add_shake(g, 1.5 + f32(b.power))
 		}
 
 		// friction: shed speed, and drop cold once slow enough
@@ -311,8 +378,7 @@ update :: proc(g: ^Game, dt: f32) {
 		// a hot bullet burns the player it touches (it keeps flying)
 		if b.hot && g.iframes <= 0 &&
 		   linalg.distance(b.pos, g.player) < PLAYER_RADIUS + BULLET_RADIUS {
-			g.hp -= HOT_DAMAGE
-			g.iframes = IFRAMES
+			hurt_player(g, HOT_DAMAGE)
 		}
 
 	case .Resting:
@@ -322,6 +388,7 @@ update :: proc(g: ^Game, dt: f32) {
 			b.power = 1
 			b.hot = false
 			b.kills = 0
+			rl.PlaySound(g.snd.pickup)
 		}
 	}
 
@@ -343,14 +410,16 @@ update :: proc(g: ^Game, dt: f32) {
 				e.alive = false
 				b.kills += 1
 				g.score += COMBO_BASE * b.kills
+				rl.SetSoundPitch(g.snd.kill, 1.0 + f32(b.kills) * 0.08)
+				rl.PlaySound(g.snd.kill)
+				add_shake(g, 3)
 			}
 		}
 
 		// enemy touch hurts the player (a charger's dash hits harder)
-		if e.alive && g.touch_cd <= 0 &&
+		if e.alive && g.iframes <= 0 &&
 		   linalg.distance(e.pos, g.player) < PLAYER_RADIUS + e.radius {
-			g.hp -= touch_damage(e)
-			g.touch_cd = TOUCH_CD
+			hurt_player(g, touch_damage(e))
 		}
 	}
 
@@ -369,37 +438,39 @@ update :: proc(g: ^Game, dt: f32) {
 	if g.hp <= 0 {
 		g.hp = 0
 		g.mode = .GameOver
+		add_shake(g, SHAKE_MAX)
+		rl.PlaySound(g.snd.lose)
 	}
 }
 
 draw :: proc(g: ^Game) {
 	rl.ClearBackground(rl.Color{18, 18, 24, 255})
 
-	// arena floor + walls
-	rl.DrawRectangle(WALL, WALL, WINDOW_W - 2 * WALL, WINDOW_H - 2 * WALL, rl.Color{30, 30, 40, 255})
-	rl.DrawRectangleLinesEx(
-		rl.Rectangle{WALL, WALL, WINDOW_W - 2 * WALL, WINDOW_H - 2 * WALL},
-		3, rl.Color{70, 70, 95, 255},
-	)
-
 	if g.mode == .Title {
+		draw_arena()
 		center_text("RICOCHET", 72, WINDOW_H / 2 - 120, rl.RAYWHITE)
 		center_text("ARENA, but you only have one bullet.", 22, WINDOW_H / 2 - 30, rl.LIGHTGRAY)
 		center_text("WASD move   -   Left click throw   -   Right click recall", 20, WINDOW_H / 2 + 10, rl.GRAY)
 		center_text("It bounces off walls: +1 power each bounce. Once bounced, it burns YOU.", 20, WINDOW_H / 2 + 40, rl.GRAY)
 		center_text("Each kill in one throw scores more. Recall is safe but resets power.", 20, WINDOW_H / 2 + 70, rl.GRAY)
-		center_text("When it stops, walk over it to pick it up.", 20, WINDOW_H / 2 + 100, rl.GRAY)
-		center_text("Press ENTER or click to start", 24, WINDOW_H / 2 + 130, rl.YELLOW)
+		center_text("Survive 2 minutes to win.", 20, WINDOW_H / 2 + 100, rl.GRAY)
+		center_text("Press ENTER or click to start", 24, WINDOW_H / 2 + 135, rl.YELLOW)
 		return
 	}
 
-	// enemies
+	// --- world, drawn through a shaking camera ---
+	cam := rl.Camera2D{zoom = 1}
+	if g.shake > 0 {
+		cam.offset = {(rand.float32() * 2 - 1) * g.shake, (rand.float32() * 2 - 1) * g.shake}
+	}
+	rl.BeginMode2D(cam)
+	draw_arena()
+
 	for e in g.enemies {
-		if !e.alive do continue
-		draw_enemy(g, e)
+		if e.alive do draw_enemy(g, e)
 	}
 
-	// player (flashes while burned)
+	// player (flashes white during i-frames)
 	pcol := rl.Color{90, 160, 255, 255}
 	if g.iframes > 0 && int(g.time * 20) % 2 == 0 do pcol = rl.Color{255, 255, 255, 255}
 	rl.DrawCircleV(g.player, PLAYER_RADIUS, pcol)
@@ -423,6 +494,13 @@ draw :: proc(g: ^Game) {
 		rl.DrawCircleV(b.pos, BULLET_RADIUS, rl.Color{120, 120, 130, 255})
 		rl.DrawCircleLinesV(b.pos, BULLET_RADIUS + 3, rl.Color{90, 90, 100, 255})
 	}
+	rl.EndMode2D()
+
+	// red flash when the player is hurt (screen space, over the world)
+	if g.flash > 0 {
+		a := u8(130 * g.flash / FLASH_TIME)
+		rl.DrawRectangle(0, 0, WINDOW_W, WINDOW_H, rl.Color{200, 30, 30, a})
+	}
 
 	draw_hud(g)
 
@@ -432,6 +510,20 @@ draw :: proc(g: ^Game) {
 		center_text(fmt.ctprintf("Score: %d    Survived: %.0fs", g.score, g.time), 28, WINDOW_H / 2, rl.RAYWHITE)
 		center_text("Press R to play again   -   ENTER for title", 22, WINDOW_H / 2 + 60, rl.YELLOW)
 	}
+	if g.mode == .Win {
+		rl.DrawRectangle(0, 0, WINDOW_W, WINDOW_H, rl.Color{0, 0, 0, 170})
+		center_text("YOU SURVIVED", 64, WINDOW_H / 2 - 90, rl.Color{120, 230, 140, 255})
+		center_text(fmt.ctprintf("Final score: %d", g.score), 28, WINDOW_H / 2, rl.RAYWHITE)
+		center_text("Press R to play again   -   ENTER for title", 22, WINDOW_H / 2 + 60, rl.YELLOW)
+	}
+}
+
+draw_arena :: proc() {
+	rl.DrawRectangle(WALL, WALL, WINDOW_W - 2 * WALL, WINDOW_H - 2 * WALL, rl.Color{30, 30, 40, 255})
+	rl.DrawRectangleLinesEx(
+		rl.Rectangle{WALL, WALL, WINDOW_W - 2 * WALL, WINDOW_H - 2 * WALL},
+		3, rl.Color{70, 70, 95, 255},
+	)
 }
 
 draw_enemy :: proc(g: ^Game, e: Enemy) {
@@ -465,6 +557,11 @@ draw_enemy :: proc(g: ^Game, e: Enemy) {
 			rl.DrawCircleLinesV(e.pos, e.radius + 4, rl.Color{255, 255, 255, 120})
 		}
 	}
+
+	// white flash the instant it's struck (brute survivors read as "I hit it")
+	if e.hit_cd > HIT_CD * 0.55 {
+		rl.DrawCircleV(e.pos, e.radius, rl.Color{255, 255, 255, 150})
+	}
 }
 
 draw_hud :: proc(g: ^Game) {
@@ -475,7 +572,11 @@ draw_hud :: proc(g: ^Game) {
 	rl.DrawText(fmt.ctprintf("HP %d", g.hp), WALL + 14, WALL + 9, 16, rl.RAYWHITE)
 
 	rl.DrawText(fmt.ctprintf("SCORE %d", g.score), WINDOW_W / 2 - 60, WALL + 8, 22, rl.RAYWHITE)
-	rl.DrawText(fmt.ctprintf("%.0fs", g.time), WINDOW_W - WALL - 70, WALL + 8, 22, rl.LIGHTGRAY)
+
+	// countdown to the survival win (mm:ss), turns red in the final 10s
+	left := max(0, WIN_TIME - g.time)
+	tcol := left <= 10 ? rl.Color{255, 90, 90, 255} : rl.LIGHTGRAY
+	rl.DrawText(fmt.ctprintf("%d:%02d", int(left) / 60, int(left) % 60), WINDOW_W - WALL - 76, WALL + 8, 22, tcol)
 
 	// bullet readout
 	b := g.bullet
@@ -506,14 +607,36 @@ center_text_at :: proc(text: cstring, size, cx, y: i32, col: rl.Color) {
 	rl.DrawText(text, cx - w / 2, y, size, col)
 }
 
+load_sounds :: proc() -> Sounds {
+	s: Sounds
+	s.throw  = make_sound(440, 0.10, 0.4, true)  // quick blip
+	s.bounce = make_sound(600, 0.07, 0.35, true) // click (pitch-shifted per bounce)
+	s.kill   = make_sound(320, 0.12, 0.45, true) // pop
+	s.hurt   = make_sound(110, 0.22, 0.5, false) // low buzz
+	s.pickup = make_sound(760, 0.09, 0.3, false) // soft chime
+	s.win    = make_sound(680, 0.55, 0.4, false) // bright tone
+	s.lose   = make_sound(90, 0.55, 0.5, false)  // low tone
+	return s
+}
+
+unload_sounds :: proc(s: Sounds) {
+	rl.UnloadSound(s.throw);  rl.UnloadSound(s.bounce); rl.UnloadSound(s.kill)
+	rl.UnloadSound(s.hurt);   rl.UnloadSound(s.pickup); rl.UnloadSound(s.win)
+	rl.UnloadSound(s.lose)
+}
+
 main :: proc() {
 	rl.InitWindow(WINDOW_W, WINDOW_H, "RICOCHET")
 	defer rl.CloseWindow()
+	rl.InitAudioDevice()
+	defer rl.CloseAudioDevice()
 	rl.SetTargetFPS(60)
 
 	g: Game
 	g.enemies = make([dynamic]Enemy)
 	defer delete(g.enemies)
+	g.snd = load_sounds()
+	defer unload_sounds(g.snd)
 	g.mode = .Title
 
 	for !rl.WindowShouldClose() {

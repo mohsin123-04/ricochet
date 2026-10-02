@@ -45,8 +45,9 @@ While the bullet is out of your hand you're unarmed — you can only run. When i
 - **Pass 1** — movement, the one-bullet throw/ricochet/bounce-power/hot/pick-up loop, green grunts, health, score, game over + replay.
 - **Pass 2** — **recall** (right click) and **pierce combos** (rising score per kill in one throw).
 - **Pass 3** — **purple brutes** and **orange chargers**, plus a per-enemy hit debounce so one bullet pass deals `power` once (makes brute HP meaningful).
+- **Pass 4** — **survive 2:00 to win** (countdown HUD, win/lose screens) and **juice**: screen shake, red hurt-flash, enemy hit-flash, and procedurally generated sound (no external audio assets).
 
-Planned next: a **win** condition, then juice (screen shake, hit flashes, sound).
+Planned next: playtest and balance (speeds, friction, damage, spawn rates, charger timings).
 
 ## Credits
 
