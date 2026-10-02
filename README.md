@@ -46,8 +46,7 @@ While the bullet is out of your hand you're unarmed — you can only run. When i
 - **Pass 2** — **recall** (right click) and **pierce combos** (rising score per kill in one throw).
 - **Pass 3** — **purple brutes** and **orange chargers**, plus a per-enemy hit debounce so one bullet pass deals `power` once (makes brute HP meaningful).
 - **Pass 4** — **survive 2:00 to win** (countdown HUD, win/lose screens) and **juice**: screen shake, red hurt-flash, enemy hit-flash, and procedurally generated sound (no external audio assets).
-
-Planned next: playtest and balance (speeds, friction, damage, spawn rates, charger timings).
+- **Pass 5** — spawn-director balance: total enemy cap, per-type caps (2 chargers / 4 brutes), a charger cooldown, and rarity weighting (green common, purple occasional, orange rare) so difficulty ramps by unlocking harder types, not by flooding the screen.
 
 ## Credits
 

@@ -56,6 +56,17 @@ CHASE_TIME     :: 1.6 // max chase before it commits to a dash
 
 HIT_CD :: 0.18 // per-enemy debounce so one bullet pass = one hit of `power`
 
+// --- spawn director: keeps the arena readable. green = common, purple = occasional,
+// orange = rare, and never more than a couple of the hard ones at once. ---
+MAX_ENEMIES      :: 12  // hard cap on total enemies alive (spawning pauses at the cap)
+MAX_BRUTES       :: 4   // at most this many purple brutes alive at once
+MAX_CHARGERS     :: 2   // at most this many orange chargers alive at once
+P_CHARGER        :: 0.14 // chance a spawn is a charger (when eligible + under cap)
+P_BRUTE          :: 0.30 // chance a spawn is a brute (when eligible + under cap)
+CHARGER_SPAWN_CD :: 7.0  // minimum seconds between charger spawns, so they never pack in
+SPAWN_SLOW       :: 2.0  // seconds between spawns early on
+SPAWN_FAST       :: 0.85 // floor on the spawn interval late game
+
 WIN_TIME    :: 120.0 // survive two minutes to win
 SHAKE_DECAY :: 42.0  // px/s the screen shake bleeds off
 SHAKE_MAX   :: 14.0
@@ -115,6 +126,7 @@ Game :: struct {
 	score:       int,
 	time:        f32,
 	spawn_timer: f32,
+	charger_cd:  f32, // cooldown gating charger spawns
 }
 
 safe_normalize :: proc(v: rl.Vector2) -> rl.Vector2 {
@@ -175,6 +187,7 @@ reset :: proc(g: ^Game) {
 	g.score = 0
 	g.time = 0
 	g.spawn_timer = 1.0
+	g.charger_cd = 0
 	g.bullet = Bullet {
 		state = .Held,
 		power = 1,
@@ -192,12 +205,25 @@ edge_spawn_pos :: proc() -> rl.Vector2 {
 }
 
 spawn_enemy :: proc(g: ^Game) {
-	// pick a kind based on how long the run has lasted
+	// count what's already out so the caps can hold
+	n_brute, n_charger := 0, 0
+	for e in g.enemies {
+		switch e.kind {
+		case .Brute:   n_brute += 1
+		case .Charger: n_charger += 1
+		case .Grunt:
+		}
+	}
+
+	// pick a kind: chargers are rare + cooldown-gated + capped, brutes occasional +
+	// capped, everything else is a green grunt. Difficulty rises by *unlocking*
+	// the harder kinds over time, not by flooding the screen.
 	kind := EnemyKind.Grunt
 	r := rand.float32()
-	if g.time >= CHARGER_AFTER && r < 0.22 {
+	if g.time >= CHARGER_AFTER && g.charger_cd <= 0 && n_charger < MAX_CHARGERS && r < P_CHARGER {
 		kind = .Charger
-	} else if g.time >= BRUTE_AFTER && r < 0.5 {
+		g.charger_cd = CHARGER_SPAWN_CD
+	} else if g.time >= BRUTE_AFTER && n_brute < MAX_BRUTES && r < P_BRUTE {
 		kind = .Brute
 	}
 
@@ -428,11 +454,16 @@ update :: proc(g: ^Game, dt: f32) {
 		if !g.enemies[i].alive do unordered_remove(&g.enemies, i)
 	}
 
-	// spawn grunts, a little faster over time
+	// spawn director: pause at the total cap, otherwise spawn a little faster over time
+	if g.charger_cd > 0 do g.charger_cd -= dt
 	g.spawn_timer -= dt
 	if g.spawn_timer <= 0 {
-		spawn_enemy(g)
-		g.spawn_timer = max(0.35, 1.5 - g.time * 0.01)
+		if len(g.enemies) < MAX_ENEMIES {
+			spawn_enemy(g)
+			g.spawn_timer = clamp(SPAWN_SLOW - g.time * 0.0075, SPAWN_FAST, SPAWN_SLOW)
+		} else {
+			g.spawn_timer = 0.5 // arena's full; check back shortly
+		}
 	}
 
 	if g.hp <= 0 {
