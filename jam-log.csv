@@ -1,2 +1,2 @@
 session,date,minutes,tool,model,tokens_in,tokens_out,tokens_source,prompts,features,llm_helpfulness,notes
-1,2026-09-23,40,claude-code,claude-sonnet-5,182000,9400,ccusage incl. cache,11,window;states;movement,4,"best: state switch in one go; worst: invented rl.GetDeltaTime"
+1,2026-10-02,75,claude-code,claude-opus-4-8,13104985,82207,ccusage incl. cache,9,movement;throw;ricochet;recall;combos;enemies;brutes;chargers;win;juice;sound;balance,4,"best: whole game in ~5 passes (one bullet -> ricochet -> power/hot -> recall -> combos -> 3 enemies -> win + juice); worst: nearly shipped a per-frame multi-hit bug that let a power-1 bullet melt brutes"

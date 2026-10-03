@@ -1,112 +1,180 @@
 ---
 # ---- Fill every field. Use `unavailable` (with a reason in tokens_source) rather than guessing. ----
-game_title: ""
-twist_one_liner: ""            # "ARENA, but ..."
-twist_category: ""             # rule-bender | enemies | player-progression | world | other
-twist_from_ideas_list: no      # yes | adapted | no
-how_far_from_arena: ""         # small-twist | substantial | barely-recognizable
+game_title: RICOCHET
+twist_one_liner: "ARENA, but you only have one bullet: it ricochets, gets stronger with every bounce, and once it has bounced it burns you."
+twist_category: rule-bender      # rule-bender | enemies | player-progression | world | other
+twist_from_ideas_list: adapted     # yes | adapted | no  (IDEAS.md lists a bouncing bullet; the one-bullet limit, power-per-bounce, hot bullet and recall were added on top)
+how_far_from_arena: substantial  # small-twist | substantial | barely-recognizable
 
 # Tools and models (lists; exact names as the tool shows them)
-tools: []                      # e.g. [claude-code, chatgpt-web]
-models: []                     # e.g. [claude-sonnet-5, gpt-5-mini]
-primary_model: ""              # the one that did most of the work
-plan: ""                       # free | student | paid-personal | api | none
-agent_instructions_file: no    # yes | no  (CLAUDE.md, AGENTS.md, .cursorrules, ...)
+tools: [claude-code]
+models: [claude-opus-4-8]
+primary_model: claude-opus-4-8
+plan: paid-personal
+agent_instructions_file: no        # no committed CLAUDE.md/AGENTS.md
 
 # Totals (must match jam-log.csv)
-sessions: 0
-total_minutes: 0
-total_prompts: 0
-total_tokens_in: 0             # or unavailable
-total_tokens_out: 0            # or unavailable
-tokens_source: ""              # ccusage | cost-command | dashboard | cli-summary | estimated | unavailable (+ why)
+sessions: 1
+total_minutes: 75
+total_prompts: 9                   # messages sent this sitting
+total_tokens_in: 13104985          # input + cache create + cache read, from ccusage
+total_tokens_out: 82207
+tokens_source: ccusage incl. cache
 
 # Your estimate of who wrote the code in the final build (should add to 100)
-code_share_llm_pct: 0          # accepted from an LLM with little or no change
-code_share_mixed_pct: 0        # LLM-generated then substantially edited by you
-code_share_hand_pct: 0         # written by you
+code_share_llm_pct: 90             # accepted from the LLM with little/no change
+code_share_mixed_pct: 10           # LLM-generated then changed on my direction (mostly balance numbers)
+code_share_hand_pct: 0             # typed by hand
 
 # Before this jam
-odin_experience_before: ""     # none | under-10h | 10-50h | over-50h
-llm_coding_before: ""          # never | occasional | weekly | daily
-gamedev_experience_before: ""  # none | a-tutorial | a-few-small-games | shipped-something
+odin_experience_before: none
+llm_coding_before: occasional
+gamedev_experience_before: none
 
-transcripts_shared: no         # yes | no  (optional, ungraded)
+transcripts_shared: no             # yes | no  (optional, ungraded)
 ---
 
-# Postmortem — <game title>
+# Postmortem — RICOCHET
 
-> Your own words. Grammar and spelling help from a tool is fine; the argument
-> and the evidence are yours. Aim for 1-2 pages plus the table.
+Your own words. Grammar and spelling help from a tool is fine; the argument and
+the evidence are yours. Aim for 1-2 pages plus the table.
 
 ## 1. The game
 
-One paragraph: what your game is and how to play it. Then what you **kept**,
-**changed**, **removed** and **added** compared with ARENA.
+RICOCHET is a single-screen top-down survival shooter. You move with WASD and
+throw your one and only bullet toward the mouse with left click. The bullet
+ricochets off the arena walls, and every bounce raises its power by 1 (up to 6)
+and speeds it up a little. The catch is that once it has bounced it is hot, so if
+it touches you it burns you too. Right click recalls it instantly, which is safe
+to catch but resets its power to 1. When it slows down it drops cold to the floor
+and you walk over it to pick it up. Kills pierce, so one throw can clear a whole
+line of enemies, and each kill in the same throw scores more. Survive two minutes
+to win; run out of health and you die. There are three enemies: green grunts
+(1 HP, fast), purple brutes (3 HP, slow, from about 20s), and orange chargers
+(2 HP, from about 40s, which telegraph a red line and then dash along it).
 
-**Where is the depth?** Answer the three questions from the README: the new
-**decision** the twist creates, the **trade-off** behind it, and what an
-**expert** does differently from a beginner. Use what you saw players do at
-the Monday showcase as evidence.
+Compared with ARENA:
+
+- Kept: the bounded arena, enemies pouring in and chasing, health, score, and the survive-and-replay loop.
+- Changed: shooting. ARENA lets you fire freely; RICOCHET gives you a single physical bullet you have to manage.
+- Removed: unlimited ammo, and with it the "circle and hold fire" strategy.
+- Added: the ricochet and power-per-bounce rule, the hot bullet, recall, pierce combos, the three enemy types, and the two-minute win condition.
+
+Where is the depth?
+
+The decision: every throw is a gamble about angle and about when to let the
+bullet keep bouncing. Do you throw straight for a safe cold shot, let it bounce
+to build power and risk it hitting you, or recall and reset?
+
+The trade-off: bouncing is the only way to get the power a brute needs and to line
+up big combos, but while the bullet is out you are unarmed and it can burn you.
+Recall removes the risk but throws the power away.
+
+The mastery: a skilled player leads the enemies so they line up, then throws one
+bullet to hit the whole line, which maximizes each shot and gains more points. A
+beginner just throws at whatever circle is closest.
 
 ## 2. Your setup
 
-Which tools and models, and **why** those (cost, familiarity, a friend's
-advice...). Did you give the agent a project instruction file, the Raylib
-binding, docs, example code? Paste the instruction file, or its key lines, if
-you used one.
+I used Claude Code with the claude-opus-4-8 model as an agent. It read and wrote
+main.odin and ran the Odin compiler directly. I used Claude because I am already
+familiar with it.
+
+I did not commit a project instruction file (CLAUDE.md or AGENTS.md). For honesty,
+Claude Code carries memory between sessions, so it already knew my course context,
+that this is an Odin and raylib jam, and my preference for commit style, and I did
+not paste the raylib binding or docs in by hand this sitting. The build uses only
+the Odin standard library and the vendor:raylib binding that ships with the
+compiler.
 
 ## 3. Feature by feature
 
-One row per feature you built. The first rows are ARENA's parts; drop the ones
-you removed, and add a row for each feature of your own.
-`who` = `llm`, `mixed` or `me`. `first try` = did the first LLM answer work
-without changes? `help` = 1 (got in the way) - 5 (did it well).
+In the table below, "who" is llm, mixed or me; "first try?" is whether the first
+answer from the LLM compiled and worked without my changes; and "help" is 1 (got
+in the way) to 5 (did it well).
 
 | feature | who | prompts | first try? | minutes | help 1-5 | note |
 |---|---|--:|---|--:|:--:|---|
-| window, loop, game states, restart | | | | | | |
-| player movement | | | | | | |
-| shooting | | | | | | |
-| enemies and spawning | | | | | | |
-| health, damage, hit feedback | | | | | | |
-| difficulty over time | | | | | | |
-| HUD | | | | | | |
-| (optional) sprites / sound | | | | | | |
-| *your feature* | | | | | | |
-| *your feature* | | | | | | |
-| *your feature* | | | | | | |
+| window, loop, game states, restart | llm | 1 | yes | ~8 | 5 | title/playing/over + replay, pass 1 |
+| player movement | llm | 1 | yes | ~3 | 5 | WASD, clamped to arena |
+| the one bullet (throw/ricochet/power/hot/pickup) | llm | 1 | yes | ~15 | 5 | the core twist, pass 1 (b27379a) |
+| recall + pierce combos | llm | 1 | yes | ~8 | 4 | right-click return, rising score, pass 2 (7340d7f) |
+| enemies and spawning | llm | 1 | yes | ~12 | 4 | grunt/brute/charger + charger state machine, pass 3 (3178e78) |
+| health, damage, hit feedback | llm | 1 | yes | ~5 | 5 | i-frames, hurt flash |
+| difficulty over time | mixed | 2 | no | ~10 | 4 | spawn caps + rarity; needed my balance direction, pass 5 (02f2ea9) |
+| HUD | llm | 1 | yes | ~4 | 5 | health bar, score, countdown, bullet state |
+| win condition + juice (shake/flash/sound) | llm | 1 | yes | ~12 | 4 | 2:00 survive, procedural audio, pass 4 (195e409) |
 
 ## 4. Where the LLM sped you up
 
-The easy parts. Name the features, the session number from `jam-log.csv` or
-the commit, and estimate how long it would have taken you without it.
+The whole core loop (window, states, movement, and the one-bullet system of throw,
+ricochet, power, hot and pickup) came up working in the first pass (b27379a). By
+hand, the ricochet physics and the one-bullet state machine would have taken me a
+couple of days at most.
+
+Procedural sound (pass 4, 195e409) was another one. Generating a raylib Wave from a
+decaying tone in code is fiddly to get right the first time, and the agent wrote it
+so I needed no sound files or an audio editor.
+
+The charger state machine (chase, telegraph, dash, dazed) also landed in one pass
+with readable telegraphing.
 
 ## 5. Where it did not help
 
-The hard parts. What was the problem, what did you try (prompts, other models,
-docs, a classmate, doing it by hand), and what finally worked? Was the
-difficulty Odin, Raylib, game design, tuning the feel, or the tool itself?
+The main thing the LLM did not help with was the spawn rates. Claude was not able
+to realize it would be hard for a player to fight that many enemies that quickly.
+The first version flooded the screen and I died at 71s. It only came together after
+I played it myself and told it to slow the spawns down.
 
 ## 6. One LLM-introduced bug: found, fixed, verified
 
-- **The bug**: what it did wrong, and the code (a short excerpt or a commit link).
-- **How you noticed**.
-- **The fix**: the code after.
-- **How you know it is fixed**: the evidence (debug draw, printed values, a
-  test, a before/after clip or screenshot in the repo).
+The bug: in the first enemy pass the bullet applied its damage on every frame it
+overlapped an enemy, not once per pass. A bullet sitting on an enemy for 2 to 3
+frames drained 2 to 3 times its power, so a weak power-1 bullet could kill a 3-HP
+purple brute instantly. That defeats the whole "you need a twice-bounced bullet to
+one-shot a brute" design.
+
+How I noticed: I reasoned about it while adding brutes, since a 3-HP enemy that
+dies to a power-1 hit makes brute HP meaningless. It would have been invisible with
+grunts (1 HP) because they die in a single hit either way.
+
+The fix (pass 3, commit 3178e78) was a per-enemy hit cooldown, so one pass deals
+power exactly once.
+
+Before (hit every frame):
+
+    if b.state == .Flying && dist(b.pos, e.pos) < BULLET_RADIUS + e.radius {
+        e.hp -= b.power          // runs again next frame while still overlapping
+    }
+
+After (debounced):
+
+    if e.hit_cd > 0 do e.hit_cd -= dt
+    if b.state == .Flying && e.hit_cd <= 0 && dist(b.pos, e.pos) < BULLET_RADIUS + e.radius {
+        e.hp -= b.power
+        e.hit_cd = HIT_CD        // can't be hit again for HIT_CD seconds
+    }
+
+How I know it is fixed: the brute now shows HP pips (small dots above it) and a
+white flash the instant it is struck. A power-1 bullet visibly knocks off one pip
+per pass and the brute survives; only a power-3 (twice-bounced) bullet clears all
+three pips in one pass. That on-screen pip count is the verification.
 
 ## 7. Pitch vs. delivered
 
-Paste your Wednesday pitch. What survived, what was cut, what was added, and why.
-What did you change after the Monday showcase, based on how people played it?
+Wednesday pitch: "bullets bounce off the walls and keep hitting enemies, for mass
+kills." Added on top during the build were the one-bullet limit, power per bounce,
+the hot bullet, and recall, which are the costs that make bouncing a decision.
+
+Delivered: nothing from the pitch was cut. On top of it I added the three enemy
+types (the pitch did not specify enemies), the two-minute survival win (the pitch
+had no end state), and the spawn balancing.
 
 ## 8. Improving the pipeline
 
-If you did another jam next week with the same tools, what would you change?
-Be concrete: setup, instruction files, prompting habits, when to use the LLM
-and when not, commit rhythm, how you verify, which model for which job.
-What would you want **from the tools** that they do not do today?
+Next time I would prompt better from the start. For example, I would tell Claude up
+front to make the enemy spawn rates slower, instead of fixing the balance only
+after I had played it and died to a wall of enemies.
 
 ## 9. Anything else
 
